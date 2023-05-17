@@ -12,18 +12,17 @@ database = PostgresqlDatabase(os.getenv("DB_NAME"),
                                  'password': os.getenv("PASSWORD")})
 
 
-def get_dict(cls):
-    def wrapper() -> dict:
-        out = dict()
-        pk = cls._meta.primary_key.name
-        attrs = [item.name for item in cls._meta.sorted_fields if item.name != pk]
-        query = cls.select()
-        metaclass = make_dataclass(cls.__name__, attrs)
-        for value in query:
-            out[getattr(value, pk)] = metaclass(*[getattr(value, attr) for attr in attrs])
-        return out
+def get_dict(cls) -> dict:
+    """Преобразовываем таблицу в словарь"""
+    out = dict()
+    pk = cls._meta.primary_key.name
+    attrs = [item.name for item in cls._meta.sorted_fields if item.name != pk]
+    query = cls.select()
+    metaclass = make_dataclass(cls.__name__, attrs)
+    for value in query:
+        out[getattr(value, pk)] = metaclass(*[getattr(value, attr) for attr in attrs])
 
-    return wrapper()
+    return out
 
 
 class UnknownField(object):
