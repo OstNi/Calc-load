@@ -2,6 +2,8 @@ from peewee import *
 import os
 from dotenv import load_dotenv
 from dataclasses import make_dataclass
+from operator import attrgetter
+from itertools import groupby
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -12,17 +14,27 @@ database = PostgresqlDatabase(os.getenv("DB_NAME"),
                                  'password': os.getenv("PASSWORD")})
 
 
-def get_dict(cls) -> dict:
-    """Преобразовываем таблицу в словарь"""
-    out = dict()
-    pk = cls._meta.primary_key.name
-    attrs = [item.name for item in cls._meta.sorted_fields if item.name != pk]
-    query = cls.select()
-    metaclass = make_dataclass(cls.__name__, attrs)
-    for value in query:
-        out[getattr(value, pk)] = metaclass(*[getattr(value, attr) for attr in attrs])
+def data_to_dict(cls):
+    """Декоратор, который добаляет метод Peewee model для выгрузки данных в словарь"""
+    @classmethod
+    def wrapper(cls):
+        """Преобразовываем таблицу в словарь"""
+        out = dict()
+        pk = cls._meta.primary_key.name
+        attrs = [item.name for item in cls._meta.sorted_fields if item.name != pk]
+        query = cls.select()
+        metaclass = make_dataclass(cls.__name__, attrs)
+        for value in query:
+            out[getattr(value, pk)] = metaclass(*[getattr(value, attr) for attr in attrs])
+        return out
 
-    return out
+    setattr(cls, 'data_to_dict', wrapper)
+    return cls
+
+
+def get_field_names(cls) -> list:
+    """Список имен атрибутов таблицы """
+    return [item.name for item in cls._meta.sorted_fields]
 
 
 class UnknownField(object):
@@ -118,6 +130,44 @@ class TprChapters(BaseModel):
     tc_id = IntegerField(null=True)
     tch_id = AutoField()
     tpdl_tpdl = ForeignKeyField(column_name='tpdl_tpdl_id', field='tpdl_id', model=TpDeliveries)
+
+    query = (
+            TprChapters
+            .select(TprChapters, Disciplines.dis_id, TeachProgTypes.tpt_id)
+            .join(TpDeliveries)
+            .join(TeachPrograms)
+            .join(Disciplines)
+            .switch(TeachPrograms)
+            .join(TeachProgTypes)
+        )
+
+    @classmethod
+    def data_to_dict(cls, lst_pk: list[str] = None):
+        query = (
+            TprChapters
+            .select(TprChapters, Disciplines.dis_id, TeachProgTypes.tpt_id)
+            .join(TpDeliveries)
+            .join(TeachPrograms)
+            .join(Disciplines)
+            .switch(TeachPrograms)
+            .join(TeachProgTypes)
+        )
+        data_dict = dict()
+
+        pk = cls._meta.primary_key.name
+
+        attrs = (
+            get_field_names(TprChapters) + ["dis_id", "tpt_id"]
+        )
+        metaclass = make_dataclass(cls.__name__, attrs)
+        for value in query.tuples():
+            data = metaclass(*value)
+            data_dict[getattr(data, pk)] = data
+
+        group_key = attrgetter(*lst_pk)
+        sorted_values = sorted(data_dict.values(), key=group_key)
+
+        return {key: list(group) for key, group in groupby(sorted_values, group_key)}
 
     class Meta:
         table_name = 'tpr_chapters'
@@ -317,3 +367,8 @@ class TwBlocks(BaseModel):
         indexes = (
             (('dgp_dgp', 'wt_wot', 'wt_wot_id_initialized_by'), True),
         )
+
+
+if __name__ == "__main__":
+    for key, value in TprChapters.data_to_dict(["dis_id", "tpt_id"]).items():
+        print(f"key: {key}, values: {value}")
